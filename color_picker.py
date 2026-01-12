@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import colorsys
+import json
 import re
 import tkinter as tk
+from pathlib import Path
 from tkinter import colorchooser, messagebox, ttk
 
 
@@ -10,6 +12,7 @@ class ColorPickerApp:
     """Enhanced color picker helper with history, copying, and live preview."""
 
     HISTORY_LIMIT = 10
+    FAVORITES_FILE = Path.home() / ".color_picker_favorites.json"
 
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
@@ -21,8 +24,10 @@ class ColorPickerApp:
         self._status_after_id: str | None = None
         self.current_color = {"hex": "#3498DB", "rgb": (52, 152, 219)}
         self.history: list[str] = []
+        self.favorites: list[str] = []
 
         self._build_ui()
+        self._load_favorites()
         self.set_color(self.current_color["hex"], add_to_history=False)
         self._set_status("Pick a color to get started.")
 
@@ -125,52 +130,81 @@ class ColorPickerApp:
         self.history_list.configure(yscrollcommand=scrollbar.set)
         self.history_list.bind("<Double-Button-1>", self.on_history_select)
 
+        favorites_frame = ttk.LabelFrame(self.main_frame, text="Favorite colors (double-click to reuse)", padding=15)
+        favorites_frame.grid(row=5, column=0, sticky="nsew", pady=(16, 0))
+        favorites_frame.columnconfigure(0, weight=1)
+        favorites_frame.rowconfigure(1, weight=1)
+
+        fav_buttons_frame = ttk.Frame(favorites_frame)
+        fav_buttons_frame.grid(row=0, column=0, sticky="ew", pady=(0, 8), columnspan=2)
+        ttk.Button(fav_buttons_frame, text="Add to Favorites", command=self.add_to_favorites).pack(side="left", padx=(0, 8))
+        ttk.Button(fav_buttons_frame, text="Remove Selected", command=self.remove_favorite).pack(side="left")
+
+        self.favorites_list = tk.Listbox(favorites_frame, height=6, activestyle="none", font=("Consolas", 12))
+        self.favorites_list.grid(row=1, column=0, sticky="nsew")
+        fav_scrollbar = ttk.Scrollbar(favorites_frame, orient="vertical", command=self.favorites_list.yview)
+        fav_scrollbar.grid(row=1, column=1, sticky="nsw", padx=(6, 0))
+        self.favorites_list.configure(yscrollcommand=fav_scrollbar.set)
+        self.favorites_list.bind("<Double-Button-1>", self.on_favorite_select)
+
         status_frame = ttk.Frame(self.main_frame, padding=(0, 8, 0, 0))
-        status_frame.grid(row=5, column=0, sticky="ew")
+        status_frame.grid(row=6, column=0, sticky="ew")
         self.status_var = tk.StringVar(value="Ready.")
         ttk.Label(status_frame, textvariable=self.status_var, font=("Segoe UI", 10), foreground="#555555").grid(
             row=0, column=0, sticky="w"
         )
 
     def pick_color(self) -> None:
-        color = colorchooser.askcolor(initialcolor=self.current_color["hex"], title="Pick a color")
-        if color and color[1]:
-            self.set_color(color[1].upper())
-        else:
-            self._set_status("Color selection canceled.", duration=2000)
+        try:
+            color = colorchooser.askcolor(initialcolor=self.current_color["hex"], title="Pick a color")
+            if color and color[1]:
+                self.set_color(color[1].upper())
+            else:
+                self._set_status("Color selection canceled.", duration=2000)
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to pick color: {e}")
+            self._set_status("Error picking color.", duration=2000)
 
     def apply_hex_input(self) -> None:
-        raw_value = self.hex_entry_var.get().strip()
-        if not raw_value:
-            messagebox.showinfo("No value", "Enter a HEX value to apply.")
-            return
+        try:
+            raw_value = self.hex_entry_var.get().strip()
+            if not raw_value:
+                messagebox.showinfo("No value", "Enter a HEX value to apply.")
+                return
 
-        normalized = raw_value.upper()
-        if not normalized.startswith("#"):
-            normalized = f"#{normalized}"
+            normalized = raw_value.upper()
+            if not normalized.startswith("#"):
+                normalized = f"#{normalized}"
 
-        if not re.fullmatch(r"#([0-9A-F]{3}|[0-9A-F]{6})", normalized):
-            messagebox.showerror("Invalid HEX", "Please enter a valid HEX color (e.g., #1A2B3C or #ABC).")
-            return
+            if not re.fullmatch(r"#([0-9A-F]{3}|[0-9A-F]{6})", normalized):
+                messagebox.showerror("Invalid HEX", "Please enter a valid HEX color (e.g., #1A2B3C or #ABC).")
+                return
 
-        if len(normalized) == 4:
-            normalized = f"#{normalized[1]*2}{normalized[2]*2}{normalized[3]*2}"
+            if len(normalized) == 4:
+                normalized = f"#{normalized[1]*2}{normalized[2]*2}{normalized[3]*2}"
 
-        self.set_color(normalized)
+            self.set_color(normalized)
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to apply HEX color: {e}")
+            self._set_status("Error applying color.", duration=2000)
 
     def set_color(self, hex_value: str, add_to_history: bool = True) -> None:
-        rgb = tuple(int(hex_value[i : i + 2], 16) for i in (1, 3, 5))
-        self.current_color = {"hex": hex_value, "rgb": rgb}
-        self.hex_entry_var.set(hex_value)
+        try:
+            rgb = tuple(int(hex_value[i : i + 2], 16) for i in (1, 3, 5))
+            self.current_color = {"hex": hex_value, "rgb": rgb}
+            self.hex_entry_var.set(hex_value)
 
-        self.preview.itemconfig(self.preview_rect, fill=hex_value)
-        self.hex_display.set(f"HEX: {hex_value}")
-        self.rgb_display.set(f"RGB: {self._format_rgb(rgb)}")
-        self.hsl_display.set(f"HSL: {self._format_hsl(rgb)}")
+            self.preview.itemconfig(self.preview_rect, fill=hex_value)
+            self.hex_display.set(f"HEX: {hex_value}")
+            self.rgb_display.set(f"RGB: {self._format_rgb(rgb)}")
+            self.hsl_display.set(f"HSL: {self._format_hsl(rgb)}")
 
-        if add_to_history:
-            self._update_history(hex_value)
-        self._set_status(f"Current color set to {hex_value}.", duration=2200)
+            if add_to_history:
+                self._update_history(hex_value)
+            self._set_status(f"Current color set to {hex_value}.", duration=2200)
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to set color: {e}")
+            self._set_status("Error setting color.", duration=2000)
 
     def _update_history(self, hex_value: str) -> None:
         if hex_value in self.history:
@@ -190,9 +224,13 @@ class ColorPickerApp:
         self.set_color(hex_value)
 
     def copy_to_clipboard(self, value: str, label: str) -> None:
-        self.root.clipboard_clear()
-        self.root.clipboard_append(value)
-        self._set_status(f"{label} copied to clipboard.", duration=2000)
+        try:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(value)
+            self._set_status(f"{label} copied to clipboard.", duration=2000)
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to copy to clipboard: {e}")
+            self._set_status("Error copying to clipboard.", duration=2000)
 
     def _format_rgb(self, rgb: tuple[int, int, int]) -> str:
         return f"{rgb[0]}, {rgb[1]}, {rgb[2]}"
@@ -213,6 +251,61 @@ class ColorPickerApp:
     def _reset_status(self) -> None:
         self._status_after_id = None
         self.status_var.set("Ready.")
+
+    def add_to_favorites(self) -> None:
+        """Add current color to favorites list."""
+        hex_value = self.current_color["hex"]
+        if hex_value in self.favorites:
+            self._set_status(f"{hex_value} is already in favorites.", duration=2000)
+            return
+        
+        self.favorites.append(hex_value)
+        self.favorites_list.insert(tk.END, hex_value)
+        self._save_favorites()
+        self._set_status(f"{hex_value} added to favorites.", duration=2000)
+
+    def remove_favorite(self) -> None:
+        """Remove selected color from favorites list."""
+        selection = self.favorites_list.curselection()
+        if not selection:
+            messagebox.showinfo("No selection", "Please select a favorite color to remove.")
+            return
+        
+        index = selection[0]
+        hex_value = self.favorites_list.get(index)
+        self.favorites_list.delete(index)
+        self.favorites.remove(hex_value)
+        self._save_favorites()
+        self._set_status(f"{hex_value} removed from favorites.", duration=2000)
+
+    def on_favorite_select(self, event) -> None:
+        """Handle double-click on favorite color."""
+        selection = self.favorites_list.curselection()
+        if not selection:
+            return
+        hex_value = self.favorites_list.get(selection[0])
+        self.set_color(hex_value)
+
+    def _save_favorites(self) -> None:
+        """Save favorites to JSON file."""
+        try:
+            with open(self.FAVORITES_FILE, "w") as f:
+                json.dump(self.favorites, f, indent=2)
+        except Exception as e:
+            messagebox.showerror("Save Error", f"Failed to save favorites: {e}")
+
+    def _load_favorites(self) -> None:
+        """Load favorites from JSON file."""
+        try:
+            if self.FAVORITES_FILE.exists():
+                with open(self.FAVORITES_FILE, "r") as f:
+                    self.favorites = json.load(f)
+                    for color in self.favorites:
+                        self.favorites_list.insert(tk.END, color)
+                self._set_status(f"Loaded {len(self.favorites)} favorite colors.", duration=2000)
+        except Exception as e:
+            messagebox.showwarning("Load Error", f"Failed to load favorites: {e}")
+            self.favorites = []
 
     def _resize_canvas_window(self, event) -> None:
         self.canvas.itemconfig(self._canvas_window, width=event.width)

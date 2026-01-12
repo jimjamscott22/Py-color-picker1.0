@@ -1,0 +1,11 @@
+# Python Color Picker Dependencies
+# Install with: pip install -r requirements.txt
+
+# GUI framework (included in Python standard library)
+# tkinter is built-in, but on some Linux systems you may need to install:
+# Ubuntu/Debian: sudo apt-get install python3-tk
+# Fedora: sudo dnf install python3-tkinter
+# Arch: sudo pacman -S tk
+
+# For building executables
+pyinstaller>=6.0.0
