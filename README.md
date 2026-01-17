@@ -6,19 +6,25 @@ A feature-rich color picker application built with Python and Tkinter, perfect f
 
 - **Visual Color Picker**: Interactive color selection with live preview
 - **Multiple Color Formats**: Display colors in HEX, RGB, and HSL formats
+- **HSV Sliders**: Fine-tune hue, saturation, and value with live updates
+- **Contrast Checks**: WCAG contrast ratios against white, black, and a custom background
 - **Color History**: Automatically tracks your last 10 colors
 - **Favorites System**: Save and manage your favorite colors (persisted to disk)
+- **Palette Swatches**: Clickable history/favorites swatches for fast reuse
+- **Palette Import/Export**: Save and load palettes as JSON
 - **Manual HEX Input**: Enter HEX codes directly with validation
-- **Quick Copy**: One-click copy to clipboard for HEX and RGB values
+- **Quick Copy**: One-click copy to clipboard for HEX, RGB, and HSL values
 - **Cross-Platform**: Works on Windows, macOS, and Linux
 
 ## 📦 Installation
 
 ### Prerequisites
+
 - Python 3.7 or higher
 - tkinter (usually included with Python)
 
 On Linux, you may need to install tkinter:
+
 ```bash
 # Ubuntu/Debian
 sudo apt-get install python3-tk
@@ -31,12 +37,17 @@ sudo pacman -S tk
 ```
 
 ### Running from Source
+
 ```bash
 # Clone the repository
 git clone <your-repo-url>
 cd Py-color-picker1.0
 
-# Install dependencies (optional, for building executable)
+# Create and activate a virtual environment
+python3 -m venv .venv
+source .venv/bin/activate
+
+# Install dependencies
 pip install -r requirements.txt
 
 # Run the application
@@ -46,11 +57,13 @@ python3 color_picker.py
 ## 🔨 Building Executable
 
 ### Windows
+
 ```bash
 build_exe.bat
 ```
 
 ### Linux/macOS
+
 ```bash
 chmod +x build_exe.sh
 ./build_exe.sh
@@ -70,11 +83,13 @@ The executable will be created in the `dist/` folder.
 ## 💾 Data Storage
 
 Favorite colors are automatically saved to `~/.color_picker_favorites.json` and loaded on startup.
+Palette exports are saved as JSON files containing both favorites and recent history.
 
 ## 🛠️ Technologies
 
 - Python 3
 - Tkinter (GUI framework)
+- ttkbootstrap (modern Tkinter theme)
 - colorsys (color conversion)
 - PyInstaller (for building executables)
 
