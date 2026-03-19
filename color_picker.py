@@ -2,12 +2,245 @@ from __future__ import annotations
 
 import colorsys
 import json
+import math
 import re
 import tkinter as tk
 from pathlib import Path
 from tkinter import colorchooser, filedialog, messagebox, ttk
 
 import ttkbootstrap as tb
+
+
+def _clamp(value: float, min_value: float, max_value: float) -> float:
+    return max(min_value, min(value, max_value))
+
+
+def _hsv_to_hex(hue: float, saturation: float, value: float) -> str:
+    r, g, b = colorsys.hsv_to_rgb(_clamp(hue, 0.0, 360.0) / 360.0, _clamp(saturation, 0.0, 100.0) / 100.0, _clamp(value, 0.0, 100.0) / 100.0)
+    return f"#{int(round(r * 255)):02X}{int(round(g * 255)):02X}{int(round(b * 255)):02X}"
+
+
+def hsv_triangle_vertices(cx: float, cy: float, radius: float, hue: float) -> tuple[tuple[float, float], tuple[float, float], tuple[float, float]]:
+    angle = math.radians(hue)
+    ux = math.cos(angle)
+    uy = math.sin(angle)
+    px = -uy
+    py = ux
+    tip = (cx + ux * radius, cy + uy * radius)
+    base_center = (cx - ux * radius * 0.46, cy - uy * radius * 0.46)
+    span = radius * 0.82
+    white = (base_center[0] + px * span, base_center[1] + py * span)
+    black = (base_center[0] - px * span, base_center[1] - py * span)
+    return tip, white, black
+
+
+def barycentric_weights(
+    point: tuple[float, float], vertices: tuple[tuple[float, float], tuple[float, float], tuple[float, float]]
+) -> tuple[float, float, float]:
+    (x, y) = point
+    (ax, ay), (bx, by), (cx, cy) = vertices
+    denominator = (by - cy) * (ax - cx) + (cx - bx) * (ay - cy)
+    if abs(denominator) < 1e-10:
+        return 0.0, 0.0, 0.0
+    wa = ((by - cy) * (x - cx) + (cx - bx) * (y - cy)) / denominator
+    wb = ((cy - ay) * (x - cx) + (ax - cx) * (y - cy)) / denominator
+    wc = 1.0 - wa - wb
+    return wa, wb, wc
+
+
+def point_from_barycentric(
+    vertices: tuple[tuple[float, float], tuple[float, float], tuple[float, float]],
+    weights: tuple[float, float, float],
+) -> tuple[float, float]:
+    (ax, ay), (bx, by), (cx, cy) = vertices
+    wa, wb, wc = weights
+    x = ax * wa + bx * wb + cx * wc
+    y = ay * wa + by * wb + cy * wc
+    return x, y
+
+
+def weights_from_sv(saturation: float, value: float) -> tuple[float, float, float]:
+    value = _clamp(value, 0.0, 1.0)
+    saturation = _clamp(saturation, 0.0, 1.0)
+    wa = saturation * value
+    wb = (1.0 - saturation) * value
+    wc = 1.0 - value
+    return wa, wb, wc
+
+
+def sv_from_barycentric(weights: tuple[float, float, float]) -> tuple[float, float]:
+    wa, wb, wc = (_clamp(weights[0], 0.0, 1.0), _clamp(weights[1], 0.0, 1.0), _clamp(weights[2], 0.0, 1.0))
+    total = wa + wb + wc
+    if total <= 0.0:
+        return 0.0, 0.0
+    wa, wb, wc = wa / total, wb / total, wc / total
+    value = _clamp(wa + wb, 0.0, 1.0)
+    saturation = 0.0 if value <= 1e-10 else _clamp(wa / value, 0.0, 1.0)
+    return saturation, value
+
+
+class HsvWheel(ttk.Frame):
+    def __init__(self, master, on_change, size: int = 240) -> None:
+        super().__init__(master)
+        self.on_change = on_change
+        self.size = size
+        self.center = size / 2
+        self.outer_radius = size * 0.45
+        self.ring_width = size * 0.11
+        self.inner_radius = self.outer_radius - self.ring_width
+        self.triangle_radius = self.inner_radius * 0.88
+        self.hue = 210.0
+        self.saturation = 76.0
+        self.value = 86.0
+        self._active_region: str | None = None
+
+        self.canvas = tk.Canvas(self, width=size, height=size, highlightthickness=0, bd=0)
+        self.canvas.pack()
+
+        self._draw_hue_ring()
+        self._draw_triangle()
+        self._draw_handles()
+
+        self.canvas.bind("<Button-1>", self._on_press)
+        self.canvas.bind("<B1-Motion>", self._on_drag)
+        self.canvas.bind("<ButtonRelease-1>", self._on_release)
+
+    def set_hsv(self, hue: float, saturation: float, value: float) -> None:
+        hue = _clamp(hue, 0.0, 360.0)
+        saturation = _clamp(saturation, 0.0, 100.0)
+        value = _clamp(value, 0.0, 100.0)
+        hue_changed = abs(hue - self.hue) > 0.1
+        self.hue = hue
+        self.saturation = saturation
+        self.value = value
+        if hue_changed:
+            self._draw_triangle()
+        self._draw_handles()
+
+    def _draw_hue_ring(self) -> None:
+        self.canvas.delete("ring")
+        ring_rect = (
+            self.center - self.outer_radius,
+            self.center - self.outer_radius,
+            self.center + self.outer_radius,
+            self.center + self.outer_radius,
+        )
+        for deg in range(360):
+            color = _hsv_to_hex(float(deg), 100.0, 100.0)
+            self.canvas.create_arc(
+                *ring_rect,
+                start=deg,
+                extent=1.5,
+                style="arc",
+                width=self.ring_width,
+                outline=color,
+                tags="ring",
+            )
+
+    def _draw_triangle(self) -> None:
+        self.canvas.delete("triangle")
+        vertices = hsv_triangle_vertices(self.center, self.center, self.triangle_radius, self.hue)
+        steps = 28
+        for value_step in range(steps):
+            v0 = value_step / steps
+            v1 = (value_step + 1) / steps
+            for sat_step in range(steps):
+                s0 = sat_step / steps
+                s1 = (sat_step + 1) / steps
+                p00 = point_from_barycentric(vertices, weights_from_sv(s0, v0))
+                p10 = point_from_barycentric(vertices, weights_from_sv(s1, v0))
+                p11 = point_from_barycentric(vertices, weights_from_sv(s1, v1))
+                p01 = point_from_barycentric(vertices, weights_from_sv(s0, v1))
+                fill = _hsv_to_hex(self.hue, ((s0 + s1) / 2) * 100.0, ((v0 + v1) / 2) * 100.0)
+                self.canvas.create_polygon(
+                    p00[0],
+                    p00[1],
+                    p10[0],
+                    p10[1],
+                    p11[0],
+                    p11[1],
+                    p01[0],
+                    p01[1],
+                    outline="",
+                    fill=fill,
+                    tags="triangle",
+                )
+        self.canvas.create_polygon(
+            vertices[0][0],
+            vertices[0][1],
+            vertices[1][0],
+            vertices[1][1],
+            vertices[2][0],
+            vertices[2][1],
+            outline="#111827",
+            width=1,
+            fill="",
+            tags="triangle",
+        )
+
+    def _draw_handles(self) -> None:
+        self.canvas.delete("handles")
+        angle = math.radians(self.hue)
+        ring_radius = self.inner_radius + self.ring_width / 2
+        hx = self.center + math.cos(angle) * ring_radius
+        hy = self.center + math.sin(angle) * ring_radius
+        self.canvas.create_oval(hx - 6, hy - 6, hx + 6, hy + 6, fill="", outline="#111827", width=2, tags="handles")
+        self.canvas.create_oval(hx - 4, hy - 4, hx + 4, hy + 4, fill="", outline="white", width=1, tags="handles")
+
+        vertices = hsv_triangle_vertices(self.center, self.center, self.triangle_radius, self.hue)
+        tx, ty = point_from_barycentric(vertices, weights_from_sv(self.saturation / 100.0, self.value / 100.0))
+        self.canvas.create_oval(tx - 5, ty - 5, tx + 5, ty + 5, fill="", outline="#111827", width=2, tags="handles")
+        self.canvas.create_oval(tx - 3, ty - 3, tx + 3, ty + 3, fill="", outline="white", width=1, tags="handles")
+
+    def _on_press(self, event) -> None:
+        dx = event.x - self.center
+        dy = event.y - self.center
+        distance = math.hypot(dx, dy)
+        vertices = hsv_triangle_vertices(self.center, self.center, self.triangle_radius, self.hue)
+        weights = barycentric_weights((event.x, event.y), vertices)
+        inside_triangle = min(weights) >= -0.02
+        if self.inner_radius <= distance <= self.outer_radius:
+            self._active_region = "ring"
+            self._update_hue_from_point(event.x, event.y)
+            self._emit_change(commit=False)
+            return
+        if inside_triangle:
+            self._active_region = "triangle"
+            self._update_sv_from_point(event.x, event.y)
+            self._emit_change(commit=False)
+            return
+        self._active_region = None
+
+    def _on_drag(self, event) -> None:
+        if self._active_region == "ring":
+            self._update_hue_from_point(event.x, event.y)
+            self._emit_change(commit=False)
+        elif self._active_region == "triangle":
+            self._update_sv_from_point(event.x, event.y)
+            self._emit_change(commit=False)
+
+    def _on_release(self, _event) -> None:
+        if self._active_region is not None:
+            self._emit_change(commit=True)
+        self._active_region = None
+
+    def _update_hue_from_point(self, x: float, y: float) -> None:
+        angle = math.degrees(math.atan2(y - self.center, x - self.center))
+        self.hue = (angle + 360.0) % 360.0
+        self._draw_triangle()
+        self._draw_handles()
+
+    def _update_sv_from_point(self, x: float, y: float) -> None:
+        vertices = hsv_triangle_vertices(self.center, self.center, self.triangle_radius, self.hue)
+        weights = barycentric_weights((x, y), vertices)
+        clamped = tuple(_clamp(weight, 0.0, 1.0) for weight in weights)
+        saturation, value = sv_from_barycentric((clamped[0], clamped[1], clamped[2]))
+        self.saturation = saturation * 100.0
+        self.value = value * 100.0
+        self._draw_handles()
+
+    def _emit_change(self, commit: bool) -> None:
+        self.on_change(self.hue, self.saturation, self.value, commit)
 
 
 class ColorPickerApp:
@@ -28,7 +261,7 @@ class ColorPickerApp:
         self.history: list[str] = []
         self.favorites: list[str] = []
         self.custom_background = "#1F2937"
-        self._updating_sliders = False
+        self._updating_hsv_controls = False
 
         self.hue_var = tk.IntVar(value=210)
         self.sat_var = tk.IntVar(value=76)
@@ -145,8 +378,13 @@ class ColorPickerApp:
             row=0, column=2, padx=(8, 0), sticky="ew"
         )
 
+        wheel_frame = ttk.LabelFrame(self.main_frame, text="Color wheel", padding=15)
+        wheel_frame.grid(row=4, column=0, sticky="ew", pady=(16, 0))
+        self.hsv_wheel = HsvWheel(wheel_frame, on_change=self._on_wheel_change, size=240)
+        self.hsv_wheel.pack()
+
         slider_frame = ttk.LabelFrame(self.main_frame, text="HSV sliders", padding=15)
-        slider_frame.grid(row=4, column=0, sticky="ew", pady=(16, 0))
+        slider_frame.grid(row=5, column=0, sticky="ew", pady=(16, 0))
         slider_frame.columnconfigure(1, weight=1)
 
         ttk.Label(slider_frame, text="Hue (°)").grid(row=0, column=0, sticky="w")
@@ -174,7 +412,7 @@ class ColorPickerApp:
             scale.bind("<ButtonRelease-1>", self._commit_slider_color)
 
         manual_frame = ttk.LabelFrame(self.main_frame, text="Manual HEX input", padding=15)
-        manual_frame.grid(row=5, column=0, sticky="ew", pady=(16, 0))
+        manual_frame.grid(row=6, column=0, sticky="ew", pady=(16, 0))
         manual_frame.columnconfigure(1, weight=1)
 
         ttk.Label(manual_frame, text="Enter HEX (#RGB/RRGGBB):").grid(row=0, column=0, sticky="w", padx=(0, 10))
@@ -184,7 +422,7 @@ class ColorPickerApp:
         ttk.Button(manual_frame, text="Apply", command=self.apply_hex_input).grid(row=0, column=2)
 
         contrast_frame = ttk.LabelFrame(self.main_frame, text="Contrast checks", padding=15)
-        contrast_frame.grid(row=6, column=0, sticky="ew", pady=(16, 0))
+        contrast_frame.grid(row=7, column=0, sticky="ew", pady=(16, 0))
         contrast_frame.columnconfigure(1, weight=1)
 
         self.contrast_white_var = tk.StringVar(value="White: --")
@@ -207,7 +445,7 @@ class ColorPickerApp:
         ttk.Button(custom_row, text="Pick background", command=self.pick_custom_background).pack(side="left")
 
         history_frame = ttk.LabelFrame(self.main_frame, text="Recent colors (double-click to reuse)", padding=15)
-        history_frame.grid(row=7, column=0, sticky="nsew", pady=(16, 0))
+        history_frame.grid(row=8, column=0, sticky="nsew", pady=(16, 0))
         history_frame.columnconfigure(0, weight=1)
         history_frame.rowconfigure(1, weight=1)
 
@@ -222,7 +460,7 @@ class ColorPickerApp:
         self.history_list.bind("<Double-Button-1>", self.on_history_select)
 
         favorites_frame = ttk.LabelFrame(self.main_frame, text="Favorite colors (double-click to reuse)", padding=15)
-        favorites_frame.grid(row=8, column=0, sticky="nsew", pady=(16, 0))
+        favorites_frame.grid(row=9, column=0, sticky="nsew", pady=(16, 0))
         favorites_frame.columnconfigure(0, weight=1)
         favorites_frame.rowconfigure(2, weight=1)
 
@@ -241,7 +479,7 @@ class ColorPickerApp:
         self.favorites_list.bind("<Double-Button-1>", self.on_favorite_select)
 
         status_frame = ttk.Frame(self.main_frame, padding=(0, 8, 0, 0))
-        status_frame.grid(row=9, column=0, sticky="ew")
+        status_frame.grid(row=10, column=0, sticky="ew")
         self.status_var = tk.StringVar(value="Ready.")
         ttk.Label(status_frame, textvariable=self.status_var, font=("Segoe UI", 10), foreground="#555555").grid(
             row=0, column=0, sticky="w"
@@ -292,7 +530,7 @@ class ColorPickerApp:
             self.rgb_display.set(f"RGB: {self._format_rgb(rgb)}")
             self.hsl_display.set(f"HSL: {self._format_hsl(rgb)}")
             self.hsv_display.set(f"HSV: {self._format_hsv(rgb)}")
-            self._sync_sliders_from_rgb(rgb)
+            self._sync_hsv_controls_from_rgb(rgb)
             self._update_contrast()
 
             if add_to_history:
@@ -464,30 +702,40 @@ class ColorPickerApp:
             button.grid(row=row, column=column, padx=4, pady=4)
 
     def _on_hsv_change(self, _value: str) -> None:
-        if self._updating_sliders:
+        if self._updating_hsv_controls:
             return
-        hex_value = self._hex_from_hsv()
+        hex_value = self._hex_from_hsv_values(float(self.hue_var.get()), float(self.sat_var.get()), float(self.val_var.get()))
         self.set_color(hex_value, add_to_history=False)
 
     def _commit_slider_color(self, _event) -> None:
-        hex_value = self._hex_from_hsv()
+        if self._updating_hsv_controls:
+            return
+        hex_value = self._hex_from_hsv_values(float(self.hue_var.get()), float(self.sat_var.get()), float(self.val_var.get()))
         self.set_color(hex_value, add_to_history=True)
 
-    def _hex_from_hsv(self) -> str:
-        h = self.hue_var.get() / 360
-        s = self.sat_var.get() / 100
-        v = self.val_var.get() / 100
-        r, g, b = colorsys.hsv_to_rgb(h, s, v)
-        return f"#{int(round(r * 255)):02X}{int(round(g * 255)):02X}{int(round(b * 255)):02X}"
+    def _hex_from_hsv_values(self, hue: float, saturation: float, value: float) -> str:
+        return _hsv_to_hex(hue, saturation, value)
 
-    def _sync_sliders_from_rgb(self, rgb: tuple[int, int, int]) -> None:
+    def _sync_hsv_controls_from_rgb(self, rgb: tuple[int, int, int]) -> None:
         r, g, b = (channel / 255 for channel in rgb)
         h, s, v = colorsys.rgb_to_hsv(r, g, b)
-        self._updating_sliders = True
+        self._updating_hsv_controls = True
         self.hue_var.set(int(round(h * 360)))
         self.sat_var.set(int(round(s * 100)))
         self.val_var.set(int(round(v * 100)))
-        self._updating_sliders = False
+        self.hsv_wheel.set_hsv(h * 360.0, s * 100.0, v * 100.0)
+        self._updating_hsv_controls = False
+
+    def _on_wheel_change(self, hue: float, saturation: float, value: float, commit: bool) -> None:
+        if self._updating_hsv_controls:
+            return
+        self._updating_hsv_controls = True
+        self.hue_var.set(int(round(hue)))
+        self.sat_var.set(int(round(saturation)))
+        self.val_var.set(int(round(value)))
+        self._updating_hsv_controls = False
+        hex_value = self._hex_from_hsv_values(hue, saturation, value)
+        self.set_color(hex_value, add_to_history=commit)
 
     def _relative_luminance(self, rgb: tuple[int, int, int]) -> float:
         def channel_lum(channel: int) -> float:
