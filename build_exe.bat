@@ -4,18 +4,18 @@ setlocal
 rem Navigate to the folder containing this script
 cd /d "%~dp0"
 
-rem Install PyInstaller if it is not already available
-where pyinstaller >nul 2>&1
+rem Check if uv is available
+where uv >nul 2>&1
 if errorlevel 1 (
-    echo Installing PyInstaller...
-    py -m pip install --user --upgrade pyinstaller
+    echo Error: uv is not installed. Install it from https://docs.astral.sh/uv/
+    exit /b 1
 )
 
 set APP_NAME=ColorPicker
 
 echo.
 echo Building %%APP_NAME%%.exe without console window...
-pyinstaller ^
+uv run --group build pyinstaller ^
     --noconfirm ^
     --onefile ^
     --noconsole ^

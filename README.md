@@ -20,7 +20,7 @@ A feature-rich color picker application built with Python and Tkinter, perfect f
 
 ### Prerequisites
 
-- Python 3.7 or higher
+- Python 3.8 or higher
 - tkinter (usually included with Python)
 
 On Linux, you may need to install tkinter:
@@ -43,15 +43,17 @@ sudo pacman -S tk
 git clone <your-repo-url>
 cd Py-color-picker1.0
 
-# Create and activate a virtual environment
-python3 -m venv .venv
-source .venv/bin/activate
+# Install uv (if needed)
+# Linux/macOS:
+curl -LsSf https://astral.sh/uv/install.sh | sh
+# Windows PowerShell:
+# powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 
-# Install dependencies
-pip install -r requirements.txt
+# Create/update the environment from pyproject.toml
+uv sync
 
 # Run the application
-python3 color_picker.py
+uv run python color_picker.py
 ```
 
 ## 🔨 Building Executable
@@ -62,12 +64,16 @@ python3 color_picker.py
 build_exe.bat
 ```
 
+(Uses `uv run --group build pyinstaller ...`)
+
 ### Linux/macOS
 
 ```bash
 chmod +x build_exe.sh
 ./build_exe.sh
 ```
+
+(Uses `uv run --group build pyinstaller ...`)
 
 The executable will be created in the `dist/` folder.
 
